@@ -1,0 +1,95 @@
+# ==========================================
+# SynapseRFP — .gitignore
+# ==========================================
+
+# ------------------------------------------
+# 1. Environment & Secrets (CRITICAL)
+# ------------------------------------------
+.env
+.env.local
+.env.*.local
+*.pem
+
+# ------------------------------------------
+# 2. Python & Backend (FastAPI, LangChain)
+# ------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+venv/
+.venv/
+env/
+.env_venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ------------------------------------------
+# 3. Next.js & Frontend (React, Node)
+# ------------------------------------------
+frontend/node_modules/
+frontend/.pnp
+frontend/.pnp.js
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.npm/
+
+# Next.js specific coverage and debug
+frontend/coverage/
+frontend/.swc/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ------------------------------------------
+# 4. Local Databases & RAG Data
+# ------------------------------------------
+# Ignore actual RFP documents and PDFs you drop in for testing
+# We don't want company data leaking to GitHub!
+backend/ingestion/data/*
+!backend/ingestion/data/.gitkeep
+
+# Ignore local SQLite databases (if you add memory checkpointing later)
+*.db
+*.sqlite
+*.sqlite3
+
+# Ignore local vector store / Redis dumps if they write to disk
+dump.rdb
+appendonly.aof
+
+# ------------------------------------------
+# 5. OS & IDE Specific
+# ------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# VS Code / IntelliJ
+.vscode/
+.idea/
+*.swp
+*.swo

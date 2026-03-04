@@ -1,0 +1,23 @@
+name: synapserfp-stack
+
+services:
+
+  redis:
+    image: redis:7-alpine
+    container_name: synapserfp-redis
+
+    ports:
+      # host:container - exposing so FastAPI can reach it locally (localhost:6379 -> forwards into container)
+      - "6379:6379"
+
+    volumes:
+      # keeps the data after restart. /data is the FOLDER (inside the container)
+      - redis_data:/data 
+
+    # tells Redis to write data to disk, not just keep it in RAM
+    command: redis-server --appendonly yes
+
+volumes:
+  redis_data:
+    # naming it explicitly so docker doesnt generate some random hash name
+    name: synapserfp_redis_data
