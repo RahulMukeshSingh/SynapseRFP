@@ -95,7 +95,7 @@ def ingest_data():
     raw_documents = load_documents(data_dir)
 
     if not raw_documents:
-        logger.info("Nothing to ingest — drop some files into the data/ folder.")
+        logger.info("Nothing to ingest - drop some files into the data/ folder.")
         return
 
     logger.info(f"Chunking and embedding {len(raw_documents)} pages...")

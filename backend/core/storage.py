@@ -5,11 +5,94 @@
 # All dependencies injected from main.py via config.
 # ─────────────────────────────────────────────────────────────
 
-from langchain_pinecone import PineconeVectorStore
+import json
+import uuid
+from typing import List, Optional
+
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.storage import RedisStore
-from langchain_community.retrievers import ParentDocumentRetriever
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter, TextSplitter
+from langchain_community.retrievers import PineconeHybridSearchRetriever
+
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.callbacks import CallbackManagerForRetrieverRun
+from langchain_core.documents import Document
+from langchain_core.stores import BaseStore
+
+from pinecone import Pinecone
+from pinecone_text.sparse import BM25Encoder
+
+
+class HybridParentDocumentRetriever(BaseRetriever):
+    """
+    Custom retriever combining Pinecone Hybrid Search (BM25 + Dense)
+    with the Parent-Child document pattern via Redis.
+    """
+    hybrid_retriever: PineconeHybridSearchRetriever
+    byte_store: BaseStore[str, bytes]
+    parent_splitter: TextSplitter
+    child_splitter: TextSplitter
+    id_key: str = "doc_id"
+
+    def _get_relevant_documents(
+        self, query: str, *, run_manager: CallbackManagerForRetrieverRun
+    ) -> List[Document]:
+        # 1. Search Pinecone for child chunks (BM25 + Dense vector match)
+        child_docs = self.hybrid_retriever.invoke(query)
+        
+        # 2. Extract unique parent document IDs
+        parent_ids = []
+        for doc in child_docs:
+            if self.id_key in doc.metadata and doc.metadata[self.id_key] not in parent_ids:
+                parent_ids.append(doc.metadata[self.id_key])
+                
+        if not parent_ids:
+            return []
+            
+        # 3. Retrieve full parent documents from Redis
+        parent_docs_bytes = self.byte_store.mget(parent_ids)
+        
+        # 4. Reconstruct Document objects
+        docs = []
+        for doc_byte in parent_docs_bytes:
+            if doc_byte:
+                doc_dict = json.loads(doc_byte.decode("utf-8"))
+                docs.append(
+                    Document(
+                        page_content=doc_dict["page_content"], 
+                        metadata=doc_dict.get("metadata", {})
+                    )
+                )
+                
+        return docs
+
+    def add_documents(self, documents: List[Document]) -> None:
+        """Splits, encodes, and indexes documents into Redis and Pinecone."""
+        parent_docs = self.parent_splitter.split_documents(documents)
+        doc_ids = [str(uuid.uuid4()) for _ in parent_docs]
+        
+        child_texts = []
+        child_metadatas = []
+        parent_key_values = []
+        
+        for doc_id, doc in zip(doc_ids, parent_docs):
+            # Prepare parent doc for Redis storage
+            doc_dict = {"page_content": doc.page_content, "metadata": doc.metadata}
+            parent_key_values.append((doc_id, json.dumps(doc_dict).encode("utf-8")))
+            
+            # Split into children for Pinecone storage
+            sub_docs = self.child_splitter.split_documents([doc])
+            for sub_doc in sub_docs:
+                child_texts.append(sub_doc.page_content)
+                meta = sub_doc.metadata.copy()
+                meta[self.id_key] = doc_id
+                child_metadatas.append(meta)
+                
+        # 1. Store child chunks in Pinecone (Sparse + Dense are generated under the hood)
+        self.hybrid_retriever.add_texts(texts=child_texts, metadatas=child_metadatas)
+        
+        # 2. Store parent documents in Redis
+        self.byte_store.mset(parent_key_values)
 
 
 def get_retriever(
@@ -18,71 +101,41 @@ def get_retriever(
     pinecone_index_name: str,
     redis_url: str = "redis://localhost:6379",
     embedding_model: str = "text-embedding-3-small",
-) -> ParentDocumentRetriever:
+) -> HybridParentDocumentRetriever:
     """
-    Builds and returns a ParentDocumentRetriever.
-
-    Flow:
-        Pinecone  - stores small 300-token child chunks (for precise search)
-        Redis     - stores large 1500-token parent chunks (for LLM context)
-        Retriever - searches child chunks, returns parent chunks to LLM
-    
-    Args:
-        openai_api_key:      OpenAI API key for embedding model
-        pinecone_api_key:    Pinecone API key for vector store
-        pinecone_index_name: Name of the Pinecone index
-        redis_url:           Redis connection string
-        embedding_model:     OpenAI embedding model name
-
-    Returns:
-        ParentDocumentRetriever: Ready to use retriever instance
+    Builds and returns a HybridParentDocumentRetriever.
     """
 
-    # 1. Embedding model
-    #    Converts text -> 1536-dimensional dense vectors
-    #    text-embedding-3-small: cheap, fast, great for RAG
-    embeddings = OpenAIEmbeddings(
-        model=embedding_model,
-        api_key=openai_api_key # type: ignore
+    # 1. Dense Embeddings
+    embeddings = OpenAIEmbeddings(model=embedding_model, api_key=openai_api_key) # type: ignore
+
+    # 2. Sparse Embeddings (BM25)
+    # Note: Using default() works, but fitting it to your specific corpus is highly recommended
+    bm25_encoder = BM25Encoder().default()
+
+    # 3. Pinecone Index setup
+    pc = Pinecone(api_key=pinecone_api_key)
+    index = pc.Index(pinecone_index_name)
+
+    # 4. Initialize LangChain's dedicated Pinecone Hybrid Retriever
+    hybrid_retriever = PineconeHybridSearchRetriever(
+        embeddings=embeddings,
+        sparse_encoder=bm25_encoder,
+        index=index
     )
 
-    # 2. Pinecone vector store
-    #    Holds the small 300-token child chunk embeddings
-    #    dotproduct metric required for hybrid search (BM25 + Vector)
-    vectorstore = PineconeVectorStore(
-        index_name=pinecone_index_name,
-        embedding=embeddings,
-        pinecone_api_key=pinecone_api_key
-    )
-
-    # 3. Redis document store
-    #    Holds the full 1500-token parent chunks
-    #    Pinecone returns doc_id -> Redis returns the full parent text
+    # 5. Redis document store
     redis_store = RedisStore(redis_url=redis_url)
 
-    # 4. Parent splitter
-    #    Large chunks — rich context fed to the LLM when answering
-    #    overlap=150 prevents cutting sentences at chunk boundaries
-    parent_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1500,
-        chunk_overlap=150
-    )
+    # 6. Splitters
+    parent_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=150)
+    child_splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=30)
 
-    # 5. Child splitter
-    #    Small chunks — precise snippets embedded into Pinecone
-    #    overlap=30 keeps enough context for accurate search
-    child_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=300,
-        chunk_overlap=30
-    )
-
-    # 6. Wire everything into ParentDocumentRetriever
-    #    id_key="doc_id" — metadata key linking child vector -> parent doc
-    #    LangChain handles the Pinecone -> Redis lookup automatically
-    return ParentDocumentRetriever(
-        vectorstore=vectorstore,
+    # 7. Wire everything into our Custom Retriever
+    return HybridParentDocumentRetriever(
+        hybrid_retriever=hybrid_retriever,
         byte_store=redis_store,
-        id_key="doc_id",
         parent_splitter=parent_splitter,
         child_splitter=child_splitter,
+        id_key="doc_id"
     )

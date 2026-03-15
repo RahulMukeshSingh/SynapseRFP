@@ -23,6 +23,12 @@ class Config:
     openai_api_key: str         = field(default_factory=lambda: os.getenv("OPENAI_API_KEY",""))
     openai_embedding_model: str = field(default_factory=lambda: os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"))
 
+    # Mistral
+    mistral_api_key: str = field(default_factory=lambda: os.getenv("MISTRAL_API_KEY", ""))
+
+    # Cohere
+    cohere_api_key: str = field(default_factory=lambda: os.getenv("COHERE_API_KEY", ""))
+
     # Pinecone
     pinecone_api_key: str       = field(default_factory=lambda: os.getenv("PINECONE_API_KEY",""))
     pinecone_index_name: str    = field(default_factory=lambda: os.getenv("PINECONE_INDEX_NAME", "rfp-responder"))
