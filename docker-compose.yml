@@ -17,6 +17,44 @@ services:
     # tells Redis to write data to disk, not just keep it in RAM
     command: redis-server --appendonly yes
 
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: synapserfp-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - COHERE_API_KEY=${COHERE_API_KEY}
+      - PINECONE_API_KEY=${PINECONE_API_KEY}
+      - PINECONE_INDEX_NAME=${PINECONE_INDEX_NAME}
+      - REDIS_URL=redis://redis:6379  # hardcoded: backend -> redis is always container-to-container
+      - LLM_PROVIDER=${LLM_PROVIDER}
+      # LangSmith Tracing
+      - LANGCHAIN_TRACING_V2=${LANGSMITH_TRACING}
+      - LANGCHAIN_ENDPOINT=${LANGSMITH_ENDPOINT}
+      - LANGCHAIN_API_KEY=${LANGSMITH_API_KEY}
+      - LANGCHAIN_PROJECT=${LANGSMITH_PROJECT}
+    depends_on:
+      - redis
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=http://localhost:8000/api  # ← build arg, browser uses localhost
+    container_name: synapserfp-frontend
+    ports:
+      - "3000:3000"
+    # no environment needed for NEXT_PUBLIC_ vars — they're baked in at build time
+    depends_on:
+      - backend
+
+
 volumes:
   redis_data:
     # naming it explicitly so docker doesnt generate some random hash name

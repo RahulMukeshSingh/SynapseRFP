@@ -6,7 +6,9 @@ import { useEffect, useRef } from 'react';
 
 export default function Chat() {
   const { messages, input, handleInputChange, handleSubmit, isLoading } = useChat({
-    api: 'http://localhost:8000/api/chat', // Pointing directly to your new FastAPI server
+    api: process.env.NEXT_PUBLIC_API_URL 
+      ? `${process.env.NEXT_PUBLIC_API_URL}/chat` 
+      : 'http://localhost:8000/api/chat',
   });
 
   // Auto-scroll to the bottom of the chat
