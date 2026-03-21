@@ -1,14 +1,24 @@
 # backend/main.py
+import os
 import uuid
 from typing import cast
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-
 from langchain_core.runnables import RunnableConfig
 from backend.agents.graph import app as graph_app
 from backend.agents.state import GraphState
+from nemoguardrails import LLMRails, RailsConfig
+
+# Load Guardrails on startup
+
+
+current_dir = os.path.dirname(os.path.abspath(__file__)) # Get the directory where main.py currently lives
+guardrails_path = os.path.join(current_dir, "guardrails") # Append 'guardrails' to it (.../backend/guardrails)
+config = RailsConfig.from_path(guardrails_path)
+rails = LLMRails(config)
+
 
 app = FastAPI(title="SynapseRFP API")
 
@@ -54,10 +64,29 @@ async def generate_response(question: str):
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
-    # Get the last message from the user
     user_query = request.messages[-1]["content"]
     
-    # Return a streaming response back to the Next.js frontend
+    # 1. NeMo Guardrail Check
+    safe_response = await rails.generate_async(messages=[{"role": "user", "content": user_query}])
+    
+    # --- FIX: Safely extract the string to satisfy Pylance ---
+    if isinstance(safe_response, dict):
+        response_text = safe_response.get("content", "")
+    elif isinstance(safe_response, str):
+        response_text = safe_response
+    else:
+        # Fallback just in case it returns a GenerationResponse object
+        response_text = str(safe_response)
+    # ---------------------------------------------------------
+
+    # If NeMo blocks it, it will return a pre-canned refusal string instead of passing it to LangGraph
+    if response_text.startswith("GUARDRAIL_BLOCKED:"):
+        # Yield the blocked response
+        async def blocked_stream():
+            yield f"_[System: Request blocked by security guardrails.]_\n\n{response_text}"
+        return StreamingResponse(blocked_stream(), media_type="text/event-stream")
+
+    # If safe, pass to LangGraph
     return StreamingResponse(generate_response(user_query), media_type="text/event-stream")
 
 if __name__ == "__main__":

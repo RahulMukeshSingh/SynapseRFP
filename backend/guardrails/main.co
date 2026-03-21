@@ -1,0 +1,7 @@
+# This handles general security violations (like jailbreaks or toxicity)
+define bot refuse to respond
+  "GUARDRAIL_BLOCKED: I cannot answer that request."
+
+# This handles off-topic questions (if you are enforcing topical guardrails)
+define bot express cannot handle
+  "GUARDRAIL_BLOCKED: I am not allowed to discuss that topic."
