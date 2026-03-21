@@ -1,25 +1,34 @@
 # backend/main.py
-# ─────────────────────────────────────────────────────────────
-# SynapseRFP — Execution Entry Point
-# ─────────────────────────────────────────────────────────────
-
 import uuid
-from backend.agents.graph import app
-from langchain_core.runnables import RunnableConfig
-from backend.agents.state import GraphState
 from typing import cast
-from langgraph.errors import GraphRecursionError
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
-def run_synapse_rfp(question: str):
-    """
-    Runs the multi-agent graph for a specific question.
-    """
-    
-    # Initialize the State
-    # We give it a unique thread_id so we can track this specific conversation
+from langchain_core.runnables import RunnableConfig
+from backend.agents.graph import app as graph_app
+from backend.agents.state import GraphState
+
+app = FastAPI(title="SynapseRFP API")
+
+# Allow Next.js frontend to communicate with FastAPI
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"], # In production, change it to your frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class ChatRequest(BaseModel):
+    messages: list
+
+async def generate_response(question: str):
+    """Generator function to stream LangGraph outputs."""
     config = cast(RunnableConfig, {
         "configurable": {"thread_id": str(uuid.uuid4())},
-        "recursion_limit": 5  # hard cap: prevents infinite Critic -> Drafter/Retriever loops. It will anyways be dormant after 3 retries of 'retry_count' below, but this is an extra safety measure.
+        "recursion_limit": 5 
     })
     
     initial_state = cast(GraphState, {
@@ -32,41 +41,25 @@ def run_synapse_rfp(question: str):
         "final_answer": ""      
     })
 
-    print(f"\n🚀 Starting SynapseRFP for: '{question}'\n")
-    print("="*50)
-
-    # Stream the Graph Execution
-    # 'stream' allows us to see each node's output as it happens
-    try:
-        for event in app.stream(initial_state, config, version="v2"):
-            for node_name, output in event.items():
-                print(f"\n[NODE]: {node_name.upper()}")
+    # Stream graph execution
+    async for event in graph_app.astream(initial_state, config, version="v2"):
+        for node_name, output in event.items():
+            if isinstance(output, dict): # for pylance type checking
+                if "draft_response" in output and node_name == "drafter":
+                    # Yielding the draft text to the frontend as it's generated
+                    yield f"{output['draft_response']}\n\n"
                 
-                # Show specific updates based on the node
-                if isinstance(output, dict):
-                    if "sub_tasks" in output:
-                        print(f"Planner created: {output.get('sub_tasks')}")
-                    
-                    if "draft_response" in output:
-                        draft = output.get("draft_response", "")
-                        print(f"Draft generated (first 100 chars): {str(draft)[:100]}...")
-                    
-                    if "critic_feedback" in output:
-                        print(f"Critic says: {output.get('critic_feedback')}")
-                else:
-                    print(f"Node output: {type(output)}")
-    except GraphRecursionError:
-        print("Recursion limit hit - retry_count logic may have a bug")
+                if "critic_feedback" in output:
+                    yield f"_[System: Critic Evaluation - {output['critic_feedback']}]_\n\n"
 
-    # 3. Get Final State
-    final_state = app.get_state(config)
-    return final_state.values.get("draft_response")
+@app.post("/api/chat")
+async def chat_endpoint(request: ChatRequest):
+    # Get the last message from the user
+    user_query = request.messages[-1]["content"]
+    
+    # Return a streaming response back to the Next.js frontend
+    return StreamingResponse(generate_response(user_query), media_type="text/event-stream")
 
 if __name__ == "__main__":
-    # Test Question
-    test_q = "What is your policy on data encryption at rest and in transit?"
-    result = run_synapse_rfp(test_q)
-    
-    print("\n" + "="*50)
-    print("FINAL VERIFIED RESPONSE:")
-    print(result)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

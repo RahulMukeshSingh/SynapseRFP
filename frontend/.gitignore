@@ -1,5 +1,5 @@
 # ==========================================
-# SynapseRFP — Master .gitignore
+# SynapseRFP — Final Master .gitignore
 # ==========================================
 
 # 1. Environment & Secrets (CRITICAL)
@@ -31,10 +31,15 @@ frontend/build/
 frontend/.swc/
 frontend/coverage/
 frontend/.vercel/
-frontend/.pnp*
+
+# Plug'n'Play & Yarn
+frontend/.pnp
+frontend/.pnp.*
 frontend/.yarn/*
 !frontend/.yarn/patches
 !frontend/.yarn/plugins
+!frontend/.yarn/releases
+!frontend/.yarn/versions
 
 # TypeScript & Next build cache
 frontend/*.tsbuildinfo

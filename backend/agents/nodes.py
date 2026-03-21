@@ -13,7 +13,7 @@ from backend.config import config
 from backend.core.storage import get_retriever
 from backend.agents.prompts import PLANNER_PROMPT, DRAFTER_PROMPT, CRITIC_PROMPT
 from langchain_cohere import CohereRerank
-from langchain_community.retrievers import ContextualCompressionRetriever
+from langchain_classic.retrievers import ContextualCompressionRetriever
 
 logger = logging.getLogger(__name__)
 
