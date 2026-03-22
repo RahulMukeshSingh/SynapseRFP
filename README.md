@@ -22,8 +22,8 @@ Built with safety in mind, it integrates **NeMo Guardrails** to ensure secure an
 * **Document Parsing:** Unstructured
 * **Vector Store:** Pinecone
 * **State Management:** Redis
-* **Evaluations** Ragas
-* **Observability** LangSmith
+* **Evaluations:** Ragas
+* **Observability:** LangSmith
 
 **Frontend:**
 * **Framework:** Next.js (App Router), React
