@@ -88,11 +88,22 @@ class HybridParentDocumentRetriever(BaseRetriever):
                 meta[self.id_key] = doc_id
                 child_metadatas.append(meta)
                 
-        # 1. Store child chunks in Pinecone (Sparse + Dense are generated under the hood)
-        self.hybrid_retriever.add_texts(texts=child_texts, metadatas=child_metadatas)
+       # Store child chunks in Pinecone in safe batches of 100
+        batch_size = 100
+        for i in range(0, len(child_texts), batch_size):
+            batch_texts = child_texts[i : i + batch_size]
+            batch_metas = child_metadatas[i : i + batch_size]
+            
+            # Upload batch to Pinecone
+            self.hybrid_retriever.add_texts(
+                texts=batch_texts, 
+                metadatas=batch_metas
+            )
         
-        # 2. Store parent documents in Redis
-        self.byte_store.mset(parent_key_values)
+        # Store parent documents in Redis in safe batches of 100
+        for i in range(0, len(parent_key_values), batch_size):
+            batch_parents = parent_key_values[i : i + batch_size]
+            self.byte_store.mset(batch_parents)
 
 
 def get_retriever(

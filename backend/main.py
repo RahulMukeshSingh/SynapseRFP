@@ -14,7 +14,6 @@ from backend.agents.graph import app as graph_app
 from backend.agents.state import GraphState
 from nemoguardrails import LLMRails, RailsConfig
 from langchain_community.document_loaders import UnstructuredPDFLoader, UnstructuredExcelLoader
-from langchain_openai import ChatOpenAI
 from backend.core.llm import get_llm
 
 # Load Guardrails on startup
@@ -41,7 +40,7 @@ class ChatRequest(BaseModel):
     messages: list
 
 async def generate_response(question: str):
-    """Generator function to stream LangGraph outputs."""
+    """Generator function to stream actual LLM tokens via astream_events."""
     config = cast(RunnableConfig, {
         "configurable": {"thread_id": str(uuid.uuid4())},
         "recursion_limit": 25 
@@ -49,26 +48,30 @@ async def generate_response(question: str):
     
     initial_state = cast(GraphState, {
         "question": question,
-        "sub_tasks": [],
-        "context": [],
-        "retry_count": 0,
-        "draft_response": "",   
-        "critic_feedback": "",  
-        "final_answer": ""      
+        "sub_tasks": [], "context": [], "retry_count": 0,
+        "draft_response": "", "critic_feedback": "", "final_answer": ""      
     })
 
-    # Stream graph execution
-    async for event in graph_app.astream(initial_state, config, version="v2"):
-        for node_name, output in event.items():
-            if isinstance(output, dict): # for pylance type checking
-                # if "draft_response" in output and node_name == "drafter":
-                #     # Yielding the draft text to the frontend as it's generated
-                #     yield f"{output['draft_response']}\n\n"
+    # FIX: Use astream_events to capture real-time LLM token generation
+    async for event in graph_app.astream_events(initial_state, config, version="v2"):
+        kind = event["event"]
+        
+        # Stream tokens specifically when the LLM is generating the draft
+        if kind == "on_chat_model_stream":
+            # Extract the token string
+            chunk = event["data"].get("chunk")
+            if chunk and hasattr(chunk, "content"):
+                token = chunk.content
+                if token:
+                    yield token
                 
-                # if "critic_feedback" in output:
-                #     yield f"_[System: Critic Evaluation - {output['critic_feedback']}]_\n\n"
-                if node_name == "finalize" and "final_answer" in output:
-                    yield f"{output['final_answer']}"
+        # Optional: Yield system status updates to the frontend
+        elif kind == "on_chain_start" and event["name"] == "planner":
+            yield "\n\n_[System: Analyzing RFP request and planning search queries...]_ \n\n"
+        elif kind == "on_chain_start" and event["name"] == "retriever":
+            yield "\n\n_[System: Retrieving relevant parent documents from vector store...]_ \n\n"
+        elif kind == "on_chain_start" and event["name"] == "critic":
+            yield "\n\n_[System: Critic is evaluating the draft against context...]_ \n\n"
 
 
 
@@ -105,7 +108,7 @@ async def upload_rfp_endpoint(file: UploadFile = File(...)):
         You are an RFP parsing assistant. Extract all the security or technical questions from the following document text.
         Return ONLY a raw JSON list of strings. Do not include markdown blocks like ```json.
         
-        Text: {full_text[:15000]}  # Limiting to avoid massive token costs
+        Text: {full_text[:300000]}  # Limiting to avoid massive token costs
         """
         
         response = llm.invoke(prompt)
