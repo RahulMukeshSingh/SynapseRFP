@@ -48,7 +48,7 @@ Create a `.env` file in the root directory (where `docker-compose.yml` is locate
 
 ```env
 # LLM Provider Configuration
-LLM_PROVIDER=openai # Options: openai, mistral, cohere
+LLM_PROVIDER=openai # Options: openai, mistral
 OPENAI_API_KEY=your_openai_api_key
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 MISTRAL_API_KEY=your_mistral_api_key
