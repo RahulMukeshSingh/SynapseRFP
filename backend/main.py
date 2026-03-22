@@ -52,28 +52,28 @@ async def generate_response(question: str):
         "draft_response": "", "critic_feedback": "", "final_answer": ""      
     })
 
-    # FIX: Use astream_events to capture real-time LLM token generation
     async for event in graph_app.astream_events(initial_state, config, version="v2"):
         kind = event["event"]
+        node = event.get("metadata", {}).get("langgraph_node")
         
-        # Stream tokens specifically when the LLM is generating the draft
-        if kind == "on_chat_model_stream":
-            # Extract the token string
+        # Only stream tokens from the drafter node
+        if kind == "on_chat_model_stream" and node == "drafter":
             chunk = event["data"].get("chunk")
             if chunk and hasattr(chunk, "content"):
                 token = chunk.content
+                # guard against multi-modal list content
+                if isinstance(token, list):
+                    token = "".join(b.get("text", "") for b in token if isinstance(b, dict))
                 if token:
                     yield token
                 
-        # Optional: Yield system status updates to the frontend
-        elif kind == "on_chain_start" and event["name"] == "planner":
+        # use langgraph_node metadata instead of event["name"]
+        elif kind == "on_chain_start" and node == "planner":
             yield "\n\n_[System: Analyzing RFP request and planning search queries...]_ \n\n"
-        elif kind == "on_chain_start" and event["name"] == "retriever":
+        elif kind == "on_chain_start" and node == "retriever":
             yield "\n\n_[System: Retrieving relevant parent documents from vector store...]_ \n\n"
-        elif kind == "on_chain_start" and event["name"] == "critic":
+        elif kind == "on_chain_start" and node == "critic":
             yield "\n\n_[System: Critic is evaluating the draft against context...]_ \n\n"
-
-
 
 @app.post("/api/upload")
 async def upload_rfp_endpoint(file: UploadFile = File(...)):
