@@ -10,7 +10,7 @@ import sys
 import logging
 from pathlib import Path
 from langchain_community.document_loaders import (
-    PyPDFLoader,          # .pdf
+    UnstructuredPDFLoader,
     Docx2txtLoader,       # .docx
     UnstructuredExcelLoader,  # .xlsx
     TextLoader           # .txt .md
@@ -32,7 +32,7 @@ from backend.config import config
 
 # maps file extension to the right loader
 LOADERS = {
-    ".pdf":  PyPDFLoader,
+    ".pdf":  UnstructuredPDFLoader,
     ".docx": Docx2txtLoader,
     ".xlsx": UnstructuredExcelLoader,
     ".txt":  TextLoader,

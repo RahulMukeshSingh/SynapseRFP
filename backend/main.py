@@ -1,8 +1,11 @@
 # backend/main.py
 import os
 import uuid
+import tempfile
+import json
 from typing import cast
-from fastapi import FastAPI
+from fastapi import FastAPI 
+from fastapi import UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -10,6 +13,9 @@ from langchain_core.runnables import RunnableConfig
 from backend.agents.graph import app as graph_app
 from backend.agents.state import GraphState
 from nemoguardrails import LLMRails, RailsConfig
+from langchain_community.document_loaders import UnstructuredPDFLoader, UnstructuredExcelLoader
+from langchain_openai import ChatOpenAI
+from backend.core.llm import get_llm
 
 # Load Guardrails on startup
 
@@ -63,6 +69,60 @@ async def generate_response(question: str):
                 #     yield f"_[System: Critic Evaluation - {output['critic_feedback']}]_\n\n"
                 if node_name == "finalize" and "final_answer" in output:
                     yield f"{output['final_answer']}"
+
+
+
+@app.post("/api/upload")
+async def upload_rfp_endpoint(file: UploadFile = File(...)):
+    """
+    Parses an uploaded .pdf or .xlsx RFP document and extracts a list of questions.
+    """
+    filename = file.filename or ""
+    ext = os.path.splitext(filename)[1].lower()
+    
+    if ext not in [".pdf", ".xlsx"]:
+        raise HTTPException(status_code=400, detail="Only .pdf and .xlsx files are supported.")
+
+    # Save uploaded file temporarily
+    with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
+        temp_file.write(await file.read())
+        temp_path = temp_file.name
+
+    try:
+        # Load the document using Unstructured
+        if ext == ".pdf":
+            loader = UnstructuredPDFLoader(temp_path)
+        else:
+            loader = UnstructuredExcelLoader(temp_path)
+            
+        docs = loader.load()
+        full_text = "\n".join([d.page_content for d in docs])
+
+        # FIX: Use the centralized LLM factory!
+        llm = get_llm() 
+        
+        prompt = f"""
+        You are an RFP parsing assistant. Extract all the security or technical questions from the following document text.
+        Return ONLY a raw JSON list of strings. Do not include markdown blocks like ```json.
+        
+        Text: {full_text[:15000]}  # Limiting to avoid massive token costs
+        """
+        
+        response = llm.invoke(prompt)
+        
+        # Ensure content is treated purely as a string for json.loads
+        content_str = response.content if isinstance(response.content, str) else str(response.content)
+        
+        try:
+            questions = json.loads(content_str)
+            return {"questions": questions}
+        except json.JSONDecodeError:
+            return {"error": "Failed to extract questions cleanly.", "raw_output": content_str}
+
+    finally:
+        # Clean up the temp file
+        os.remove(temp_path)
+
 
 
 @app.post("/api/chat/sync")

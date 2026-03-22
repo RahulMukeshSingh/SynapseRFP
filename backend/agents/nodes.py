@@ -14,17 +14,11 @@ from backend.core.storage import get_retriever
 from backend.agents.prompts import PLANNER_PROMPT, DRAFTER_PROMPT, CRITIC_PROMPT
 from langchain_cohere import CohereRerank
 from langchain_classic.retrievers import ContextualCompressionRetriever # Now langchain_classic.retrievers is used insted of langchain.retrievers
+from backend.core.llm import get_llm
+
 
 logger = logging.getLogger(__name__)
 
-# --- Helpers ---
-
-def get_llm():
-    """Returns the LLM based on config provider."""
-    if config.llm_provider == "mistral":
-        return ChatMistralAI(api_key=config.mistral_api_key) # type: ignore
-    # Latest openai model gpt-5.4-mini (released on March 2026)
-    return ChatOpenAI(model="gpt-5.4-mini", api_key=config.openai_api_key) # type: ignore
 
 # --- Structured Output Schemas ---
 
