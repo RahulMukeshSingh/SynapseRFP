@@ -38,7 +38,7 @@ async def generate_response(question: str):
     """Generator function to stream LangGraph outputs."""
     config = cast(RunnableConfig, {
         "configurable": {"thread_id": str(uuid.uuid4())},
-        "recursion_limit": 5 
+        "recursion_limit": 25 
     })
     
     initial_state = cast(GraphState, {
@@ -55,17 +55,68 @@ async def generate_response(question: str):
     async for event in graph_app.astream(initial_state, config, version="v2"):
         for node_name, output in event.items():
             if isinstance(output, dict): # for pylance type checking
-                if "draft_response" in output and node_name == "drafter":
-                    # Yielding the draft text to the frontend as it's generated
-                    yield f"{output['draft_response']}\n\n"
+                # if "draft_response" in output and node_name == "drafter":
+                #     # Yielding the draft text to the frontend as it's generated
+                #     yield f"{output['draft_response']}\n\n"
                 
-                if "critic_feedback" in output:
-                    yield f"_[System: Critic Evaluation - {output['critic_feedback']}]_\n\n"
+                # if "critic_feedback" in output:
+                #     yield f"_[System: Critic Evaluation - {output['critic_feedback']}]_\n\n"
+                if node_name == "finalize" and "final_answer" in output:
+                    yield f"{output['final_answer']}"
+
+
+@app.post("/api/chat/sync")
+async def chat_sync_endpoint(request: ChatRequest):
+    """
+    Synchronous endpoint that returns the final payload instead of streaming.
+    """
+    if not request.messages:
+        return {"error": "No messages provided."}
+        
+    user_query = request.messages[-1]["content"]
+    
+    # NeMo Guardrail Check
+    safe_response = await rails.generate_async(messages=[{"role": "user", "content": user_query}])
+    
+    if isinstance(safe_response, dict):
+        response_text = safe_response.get("content", "")
+    elif isinstance(safe_response, str):
+        response_text = safe_response
+    else:
+        response_text = str(safe_response)
+
+    if response_text.startswith("GUARDRAIL_BLOCKED:"):
+        return {"final_answer": f"_[System: Request blocked by security guardrails.]_\n\n{response_text}"}
+
+    # Configure State
+    config = cast(RunnableConfig, {
+        "configurable": {"thread_id": str(uuid.uuid4())},
+        "recursion_limit": 25 
+    })
+    
+    initial_state = cast(GraphState, {
+        "question": user_query,
+        "sub_tasks": [],
+        "context": [],
+        "retry_count": 0,
+        "draft_response": "",   
+        "critic_feedback": "",
+        "final_answer": ""      
+    })
+
+    # Invoke the graph (Wait for it to finish completely)
+    final_state = await graph_app.ainvoke(initial_state, config)
+    
+    # Return the final JSON payload
+    return {"final_answer": final_state.get("final_answer", "")}
+
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatRequest):
-    user_query = request.messages[-1]["content"]
+    if not request.messages:
+        return StreamingResponse(iter(["Error: No messages provided."]), media_type="text/event-stream")
     
+    user_query = request.messages[-1]["content"]
     # 1. NeMo Guardrail Check
     safe_response = await rails.generate_async(messages=[{"role": "user", "content": user_query}])
     

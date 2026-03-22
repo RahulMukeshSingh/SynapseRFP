@@ -44,4 +44,6 @@ EVALUATION CRITERIA:
 - RETRIEVE_MORE: The draft is okay, but the documentation provided is missing a key piece of evidence needed for a complete answer.
 
 Be pedantic. If the draft says "24 hours" and the docs say "1 business day," that is a REWRITE.
+Respond with a JSON object. The `decision` field MUST be exactly one of: 
+"pass", "rewrite", or "retrieve_more". No other values are accepted.
 """

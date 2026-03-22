@@ -4,7 +4,7 @@
 # ─────────────────────────────────────────────────────────────
 
 import logging
-from typing import List, cast
+from typing import List, cast, Literal
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langchain_mistralai import ChatMistralAI
@@ -13,7 +13,7 @@ from backend.config import config
 from backend.core.storage import get_retriever
 from backend.agents.prompts import PLANNER_PROMPT, DRAFTER_PROMPT, CRITIC_PROMPT
 from langchain_cohere import CohereRerank
-from langchain_classic.retrievers import ContextualCompressionRetriever
+from langchain_classic.retrievers import ContextualCompressionRetriever # Now langchain_classic.retrievers is used insted of langchain.retrievers
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,8 @@ def get_llm():
     """Returns the LLM based on config provider."""
     if config.llm_provider == "mistral":
         return ChatMistralAI(api_key=config.mistral_api_key) # type: ignore
-    return ChatOpenAI(model="gpt-5.4", api_key=config.openai_api_key) # type: ignore
+    # Latest openai model gpt-5.4-mini (released on March 2026)
+    return ChatOpenAI(model="gpt-5.4-mini", api_key=config.openai_api_key) # type: ignore
 
 # --- Structured Output Schemas ---
 
@@ -33,7 +34,9 @@ class SearchQueries(BaseModel):
 
 class Evaluation(BaseModel):
     """Critic output schema"""
-    decision: str = Field(description="Must be one of: 'pass', 'rewrite', or 'retrieve_more'")
+    decision: Literal["pass", "rewrite", "retrieve_more"] = Field(
+        description="Must be one of: 'pass', 'rewrite', or 'retrieve_more'"
+    )
     feedback: str = Field(description="Specific reason for the decision and instructions for improvement")
 
 # --- Agent Nodes ---
@@ -99,7 +102,8 @@ def drafter_node(state: GraphState):
     llm = get_llm()
     
     # We join all the accumulated context into one big block for the LLM
-    context_block = "\n\n".join(state["context"])
+    unique_context = list(dict.fromkeys(state["context"])) # dict.fromkeys() insetad of set() to remove duplicates while preserving order
+    context_block = "\n\n".join(unique_context[-10:])  # Keep most recent 10 chunks to avoid overwhelming the LLM context issue.
     
     prompt = DRAFTER_PROMPT.format(
         question=state['question'], 
@@ -120,8 +124,9 @@ def critic_node(state: GraphState):
     llm = get_llm()
     structured_llm = llm.with_structured_output(Evaluation)
     
-    context_block = "\n\n".join(state["context"])
-    
+
+    unique_context = list(dict.fromkeys(state["context"])) # dict.fromkeys() insetad of set() to remove duplicates while preserving order
+    context_block = "\n\n".join(unique_context[-10:])  # Keep most recent 10 chunks to avoid overwhelming the LLM context issue.
     prompt = CRITIC_PROMPT.format(
         draft=state['draft_response'], 
         context=context_block
@@ -134,3 +139,15 @@ def critic_node(state: GraphState):
         "critic_feedback": f"[{structured_result.decision.upper()}] {structured_result.feedback}",
         "retry_count": state.get("retry_count", 0) + 1
     }
+
+def finalize_node(state: GraphState):
+    """
+    Copies the approved draft_response into final_answer.
+    """
+    logger.info("--- FINALIZE AGENT STARTING ---")
+    
+    # We copy the draft to the final answer. 
+    # If the graph timed out/exceeded retries, we still provide whatever draft we had.
+    draft = state.get("draft_response", "No draft could be generated.")
+    
+    return {"final_answer": draft}

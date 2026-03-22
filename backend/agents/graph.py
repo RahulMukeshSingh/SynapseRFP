@@ -9,7 +9,8 @@ from backend.agents.nodes import (
     planner_node, 
     retriever_node, 
     drafter_node, 
-    critic_node
+    critic_node,
+    finalize_node
 )
 
 # Initialize the Graph
@@ -20,6 +21,7 @@ workflow.add_node("planner", planner_node)
 workflow.add_node("retriever", retriever_node)
 workflow.add_node("drafter", drafter_node)
 workflow.add_node("critic", critic_node)
+workflow.add_node("finalize", finalize_node)
 
 # Flow
 workflow.set_entry_point("planner")
@@ -27,6 +29,7 @@ workflow.set_entry_point("planner")
 workflow.add_edge("planner", "retriever")
 workflow.add_edge("retriever", "drafter")
 workflow.add_edge("drafter", "critic")
+workflow.add_edge("finalize", END)
 
 #Logic
 def route_after_critic(state: GraphState):
@@ -38,10 +41,10 @@ def route_after_critic(state: GraphState):
     
     # Safety Check: If we've tried too many times, just stop
     if state.get("retry_count", 0) >= 3:
-        return END
+        return "finalize"
 
     if "[PASS]" in feedback:
-        return END
+        return "finalize"
     elif "[RETRIEVE_MORE]" in feedback:
         return "planner" # Go back to start to get better queries
     else:
@@ -53,7 +56,7 @@ workflow.add_conditional_edges(
     {
         "planner": "planner", # {'What route_after_critic returns': 'Which node to send to'}. If the critic says we need to retrieve more, we go back to the planner to generate new queries
         "drafter": "drafter", # If the critic says we need to rewrite, we go back to the drafter to fix the response
-        END: END # If the critic approves, we end the workflow and return the draft as the final answer
+        "finalize": "finalize"  # If the critic approves, we end the workflow and return the draft as the final answer
     }
 )
 
